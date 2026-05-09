@@ -1,0 +1,105 @@
+# Antrea ServiceMonitors — controller and agent
+#
+# Antrea does not create dedicated metrics Services by default.
+# This file creates two headless Services in kube-system and the
+# corresponding ServiceMonitors. Both use HTTPS with bearer token auth.
+#
+#   antrea-controller: port 10349, 1 pod (Deployment)
+#   antrea-agent:      port 10350, 1 pod per node (DaemonSet)
+
+# ── Antrea Controller ─────────────────────────────────────────
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: antrea-controller-metrics
+  namespace: kube-system
+  labels:
+    app: antrea
+    component: antrea-controller
+    app.kubernetes.io/name: antrea-controller
+spec:
+  clusterIP: None
+  selector:
+    app: antrea
+    component: antrea-controller
+  ports:
+    - name: https-metrics
+      port: 10349
+      targetPort: 10349
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: antrea-controller
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: antrea-controller
+    app.kubernetes.io/component: networking
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      app: antrea
+      component: antrea-controller
+      app.kubernetes.io/name: antrea-controller
+  endpoints:
+    - port: https-metrics
+      scheme: https
+      tlsConfig:
+        caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecureSkipVerify: true
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      interval: 30s
+
+# ── Antrea Agent ──────────────────────────────────────────────
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: antrea-agent-metrics
+  namespace: kube-system
+  labels:
+    app: antrea
+    component: antrea-agent
+    app.kubernetes.io/name: antrea-agent
+spec:
+  clusterIP: None
+  selector:
+    app: antrea
+    component: antrea-agent
+  ports:
+    - name: https-metrics
+      port: 10350
+      targetPort: 10350
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: antrea-agent
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: antrea-agent
+    app.kubernetes.io/component: networking
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      app: antrea
+      component: antrea-agent
+      app.kubernetes.io/name: antrea-agent
+  endpoints:
+    - port: https-metrics
+      scheme: https
+      tlsConfig:
+        caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecureSkipVerify: true
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      interval: 30s
+      honorLabels: true

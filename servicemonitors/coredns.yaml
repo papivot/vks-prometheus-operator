@@ -1,0 +1,22 @@
+# CoreDNS ServiceMonitor
+# kube-dns Service in kube-system exposes port 9153 (named "metrics") for Prometheus.
+# Standard on all VKS / upstream Kubernetes clusters.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: coredns
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: coredns
+    app.kubernetes.io/component: dns
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
+  endpoints:
+    - port: metrics
+      interval: 30s
+      scheme: http

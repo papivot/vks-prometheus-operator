@@ -1,0 +1,77 @@
+# cert-manager ServiceMonitors — controller, cainjector, webhook
+#
+# All three components expose /metrics on port 9402 over plain HTTP.
+# The Services are created by the cert-manager addon in the cert-manager namespace.
+# Port names differ per component (verified against VKS addon v1.19.4):
+#   cert-manager controller  : port name "tcp-prometheus-servicemonitor"
+#   cert-manager-cainjector  : port name "http-metrics"
+#   cert-manager-webhook     : port name "metrics"
+
+# ── cert-manager controller ───────────────────────────────────
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/component: certificates
+spec:
+  namespaceSelector:
+    matchNames:
+      - cert-manager
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/instance: cert-manager
+  endpoints:
+    - port: tcp-prometheus-servicemonitor
+      interval: 30s
+      scheme: http
+
+# ── cert-manager cainjector ───────────────────────────────────
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager-cainjector
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: cert-manager-cainjector
+    app.kubernetes.io/component: certificates
+spec:
+  namespaceSelector:
+    matchNames:
+      - cert-manager
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cainjector
+      app.kubernetes.io/instance: cert-manager
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+      scheme: http
+
+# ── cert-manager webhook ──────────────────────────────────────
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager-webhook
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: cert-manager-webhook
+    app.kubernetes.io/component: certificates
+spec:
+  namespaceSelector:
+    matchNames:
+      - cert-manager
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: webhook
+      app.kubernetes.io/instance: cert-manager
+  endpoints:
+    - port: metrics
+      interval: 30s
+      scheme: http

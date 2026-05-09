@@ -1,0 +1,31 @@
+# kube-state-metrics ServiceMonitor (VKS addon-managed)
+# The VKS addon deploys kube-state-metrics as Service "prometheus-kube-state-metrics"
+# in tanzu-system-monitoring with labels: app=prometheus, component=kube-state-metrics
+# Port name "http" maps to container port 8080.
+#
+# If you deployed kube-state-metrics yourself with standard labels
+# (app.kubernetes.io/name=kube-state-metrics), update the selector below.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-state-metrics-addon
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/component: metrics
+spec:
+  namespaceSelector:
+    matchNames:
+      - tanzu-system-monitoring
+  selector:
+    matchLabels:
+      app: prometheus
+      component: kube-state-metrics
+  endpoints:
+    - port: http
+      interval: 30s
+      honorLabels: true
+      metricRelabelings:
+        - action: drop
+          regex: kube_endpoint_address_not_ready|kube_endpoint_address_available
+          sourceLabels: [__name__]

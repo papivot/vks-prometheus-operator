@@ -1,0 +1,27 @@
+# node-exporter ServiceMonitor (VKS addon-managed)
+# The VKS addon deploys node-exporter as Service "prometheus-node-exporter"
+# in tanzu-system-monitoring with labels: app=prometheus, component=node-exporter
+# Port name "metrics" maps to port 9100.
+#
+# If you deployed node-exporter yourself with standard labels
+# (app.kubernetes.io/name=node-exporter), update the selector below.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: node-exporter-addon
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/component: metrics
+spec:
+  namespaceSelector:
+    matchNames:
+      - tanzu-system-monitoring
+  selector:
+    matchLabels:
+      app: prometheus
+      component: node-exporter
+  endpoints:
+    - port: metrics
+      interval: 30s
+      honorLabels: true

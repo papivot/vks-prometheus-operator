@@ -1,0 +1,28 @@
+# vSphere CSI Controller ServiceMonitor
+# The VKS addon creates Service "vsphere-csi-controller" in vmware-system-csi
+# with two named ports:
+#   ctlr   (2112) — vsphere-csi-controller process metrics
+#   syncer (2113) — metadata syncer process metrics
+# Both endpoints are plain HTTP, no TLS.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vsphere-csi-controller
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: vsphere-csi-controller
+    app.kubernetes.io/component: storage
+spec:
+  namespaceSelector:
+    matchNames:
+      - vmware-system-csi
+  selector:
+    matchLabels:
+      app: vsphere-csi-controller
+  endpoints:
+    - port: ctlr
+      interval: 30s
+      scheme: http
+    - port: syncer
+      interval: 30s
+      scheme: http

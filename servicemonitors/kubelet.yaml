@@ -1,0 +1,36 @@
+# kubelet ServiceMonitor — node stats metrics
+# The kubelet headless Service is pre-created by VKS in kube-system
+# (label: k8s-app=kubelet). Scrapes /metrics for kubelet operational stats.
+#
+# If the Service does not exist on your cluster, apply:
+#   kubectl create service clusterip kubelet --tcp=10250:10250 -n kube-system --dry-run=client -o yaml \
+#     | kubectl label --local -f - k8s-app=kubelet -o yaml | kubectl apply -f -
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubelet
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: kubelet
+    app.kubernetes.io/component: node
+spec:
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      k8s-app: kubelet
+  endpoints:
+    - port: https-metrics
+      scheme: https
+      tlsConfig:
+        caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecureSkipVerify: true
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      interval: 30s
+      honorLabels: true
+      relabelings:
+        - action: replace
+          sourceLabels: [__metrics_path__]
+          targetLabel: metrics_path

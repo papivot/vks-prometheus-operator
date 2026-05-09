@@ -1,0 +1,124 @@
+# Istio ServiceMonitors — istiod, ingress gateway, ztunnel
+#
+# Verified endpoints (VKS Istio ambient mesh):
+#   istiod              : port 15014 (http-monitoring) — HTTP, existing Service
+#   istio-ingressgateway: port 15090 (http-envoy-prom) — Envoy Prometheus stats,
+#                         pod-only port (not on the LoadBalancer Service)
+#   ztunnel             : port 15020 (ztunnel-stats)   — HTTP, DaemonSet per node,
+#                         pod-only port
+#
+# This file creates headless Services for ingress-gateway and ztunnel so
+# the ServiceMonitors can discover their pods.
+
+# ── istiod ────────────────────────────────────────────────────
+# The addon-created "istiod" Service already exposes port 15014
+# (named "http-monitoring") — no additional Service needed.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istiod
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: istiod
+    app.kubernetes.io/component: service-mesh
+spec:
+  namespaceSelector:
+    matchNames:
+      - istio-system
+  selector:
+    matchLabels:
+      app: istiod
+  endpoints:
+    - port: http-monitoring
+      interval: 30s
+      scheme: http
+
+# ── istio-ingressgateway ──────────────────────────────────────
+# The LoadBalancer Service does not expose port 15090. A headless
+# Service is required to reach the Envoy Prometheus stats endpoint.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: istio-ingressgateway-metrics
+  namespace: istio-system
+  labels:
+    app: istio-ingressgateway
+    app.kubernetes.io/name: istio-ingressgateway-metrics
+spec:
+  clusterIP: None
+  selector:
+    app: istio-ingressgateway
+  ports:
+    - name: http-envoy-prom
+      port: 15090
+      targetPort: 15090
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-ingressgateway
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: istio-ingressgateway
+    app.kubernetes.io/component: service-mesh
+spec:
+  namespaceSelector:
+    matchNames:
+      - istio-system
+  selector:
+    matchLabels:
+      app: istio-ingressgateway
+      app.kubernetes.io/name: istio-ingressgateway-metrics
+  endpoints:
+    - port: http-envoy-prom
+      path: /stats/prometheus
+      interval: 30s
+      scheme: http
+
+# ── ztunnel ───────────────────────────────────────────────────
+# ztunnel is the Istio ambient mesh per-node proxy (DaemonSet).
+# It exposes Prometheus metrics on port 15020 (ztunnel-stats).
+# A headless Service is required since no existing Service covers this port.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ztunnel-metrics
+  namespace: istio-system
+  labels:
+    app: ztunnel
+    app.kubernetes.io/name: ztunnel-metrics
+spec:
+  clusterIP: None
+  selector:
+    app: ztunnel
+  ports:
+    - name: ztunnel-stats
+      port: 15020
+      targetPort: 15020
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ztunnel
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: ztunnel
+    app.kubernetes.io/component: service-mesh
+spec:
+  namespaceSelector:
+    matchNames:
+      - istio-system
+  selector:
+    matchLabels:
+      app: ztunnel
+      app.kubernetes.io/name: ztunnel-metrics
+  endpoints:
+    - port: ztunnel-stats
+      interval: 30s
+      scheme: http
+      honorLabels: true
