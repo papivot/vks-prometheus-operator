@@ -1,0 +1,83 @@
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: prometheus
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  # ServiceAccount with cluster-wide RBAC (created in 01-rbac.yaml)
+  serviceAccountName: prometheus
+
+  # Watch ALL ServiceMonitors and PodMonitors across ALL namespaces.
+  # This is the recommended approach when there is a single Prometheus
+  # instance serving the whole cluster.
+  serviceMonitorSelector: {}
+  serviceMonitorNamespaceSelector: {}
+  podMonitorSelector: {}
+  podMonitorNamespaceSelector: {}
+
+  # Watch all PrometheusRule objects cluster-wide for alerting rules
+  ruleSelector: {}
+  ruleNamespaceSelector: {}
+
+  # Watch all ScrapeConfig objects cluster-wide
+  scrapeConfigSelector: {}
+  scrapeConfigNamespaceSelector: {}
+
+  # Prometheus version — match what the operator supports
+  # version: v3.5.1
+
+  # Single replica; increase to 2 for HA with shared remote storage
+  replicas: 1
+
+  # Retain 15 days of data (adjust based on PVC size)
+  retention: "5d"
+
+  # Log level — set to info for production, debug for troubleshooting
+  logLevel: info
+  logFormat: logfmt
+
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+
+  # Persistent storage using the VKS vSAN default storage class
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: vsan-esa-default-policy-raid5
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 30Gi
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 2000
+
+  # Run only on Linux nodes
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # Global scrape configuration defaults
+  scrapeInterval: 30s
+  evaluationInterval: 30s
+
+  # Enable OTLP receiver so OTel collectors can remote-write metrics
+  enableOTLPReceiver: true
+  enableRemoteWriteReceiver: true
+
+  # Enable the admin API (destructive endpoints: delete series, snapshot, etc.)
+  # Access is restricted to the admin-api credential via nginx — see 09-nginx-auth-proxy.yaml
+  enableAdminAPI: true
+
+  # Expose the Prometheus web UI and API
+  portName: web
+

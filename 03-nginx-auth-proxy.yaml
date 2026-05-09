@@ -1,0 +1,227 @@
+# ============================================================
+# Nginx Basic Auth Proxy for Prometheus
+# ============================================================
+# Two credential sets:
+#   UI + read API  → admin:prometheus       (/etc/nginx/auth/ui/.htpasswd)
+#   Admin API only → admin-api:prom-admin-2026  (/etc/nginx/auth/admin/.htpasswd)
+#
+# Admin API endpoints (/api/v1/admin/...) require the admin-api credential.
+# All other paths use the standard admin:prometheus credential.
+# ============================================================
+---
+# Secret: UI credentials — admin:prometheus (SHA1, nginx-compatible)
+# To regenerate: htpasswd -nbB -C 12 admin '<password>'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nginx-ui-htpasswd
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: nginx-auth-proxy
+type: Opaque
+data:
+  # admin:prometheus  (SHA1: admin:{SHA}qtjyPC+gbUbFKuTgbI1L2sYHS48=)
+  .htpasswd: YWRtaW46e1NIQX1xdGp5UEMrZ2JVYkZLdVRnYkkxTDJzWUhTNDg9Cg==
+---
+# Secret: Admin API credentials — admin-api:prom-admin-2026 (bcrypt)
+# To regenerate: htpasswd -nbB -C 12 admin-api '<password>'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nginx-admin-api-htpasswd
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: nginx-auth-proxy
+type: Opaque
+data:
+  # admin-api:prom-admin-2026  (bcrypt rounds=12)
+  .htpasswd: YWRtaW4tYXBpOiQyeSQxMiRKaXk3WmVhZE9GZWRIcUFyRks5ajcuVE1adXFHOVV2Q0FxckEvcEo2Rmpid21jempaWFA3Sw==
+---
+# Deployment: nginx-auth-proxy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-auth-proxy
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: nginx-auth-proxy
+    app.kubernetes.io/version: latest
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: nginx-auth
+  template:
+    metadata:
+      labels:
+        app: nginx-auth
+        app.kubernetes.io/name: nginx-auth-proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+      - name: nginx
+        image: nginx:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 4180
+          protocol: TCP
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+          readOnly: true
+        - name: htpasswd-ui
+          mountPath: /etc/nginx/auth/ui
+          readOnly: true
+        - name: htpasswd-admin
+          mountPath: /etc/nginx/auth/admin
+          readOnly: true
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: 32Mi
+            cpu: 10m
+          limits:
+            memory: 128Mi
+            cpu: 100m
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-auth-config
+          defaultMode: 0444
+      - name: htpasswd-ui
+        secret:
+          secretName: nginx-ui-htpasswd
+          defaultMode: 0400
+      - name: htpasswd-admin
+        secret:
+          secretName: nginx-admin-api-htpasswd
+          defaultMode: 0400
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-run
+        emptyDir: {}
+---
+# ConfigMap: nginx-auth-config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-auth-config
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: nginx-auth-proxy
+data:
+  default.conf: |
+    # Use kube-dns for runtime DNS resolution so nginx re-resolves the
+    # prometheus-operated Service IP after every pod restart.
+    # Without this, nginx caches the DNS result at startup and returns 502
+    # whenever the Prometheus pod is recreated and gets a new IP.
+    resolver kube-dns.kube-system.svc.cluster.local valid=15s ipv6=off;
+
+    server {
+      listen 4180;
+      server_name _;
+
+      # ── Admin API — separate credential ─────────────────────
+      # Covers all destructive/admin endpoints:
+      #   /api/v1/admin/...   (delete series, snapshots, clean tombstones)
+      #   /-/quit             (shutdown)
+      #   /-/reload           (config reload — also gated here for safety)
+      # Credential: admin-api:prom-admin-2026
+      location ~ ^/(api/v1/admin|api/v1/write|-/quit|-/reload) {
+        auth_basic "Prometheus Admin API";
+        auth_basic_user_file /etc/nginx/auth/admin/.htpasswd;
+
+        set $upstream http://prometheus-operated.tanzu-system-monitoring.svc.cluster.local:9090;
+        proxy_pass $upstream;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+      }
+
+      # ── UI + read-only API — standard credential ─────────────
+      # Credential: admin:prometheus
+      location / {
+        auth_basic "Prometheus Access";
+        auth_basic_user_file /etc/nginx/auth/ui/.htpasswd;
+
+        set $upstream http://prometheus-operated.tanzu-system-monitoring.svc.cluster.local:9090;
+        proxy_pass $upstream;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_redirect off;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+      }
+
+      # Health check endpoint (no auth required — used by liveness/readiness probes)
+      location /health {
+        access_log off;
+        return 200 "OK";
+        add_header Content-Type text/plain;
+      }
+    }
+---
+# Service: nginx-auth-proxy
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-auth-proxy
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: nginx-auth-proxy
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 4180
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: nginx-auth

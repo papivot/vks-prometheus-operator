@@ -1,0 +1,119 @@
+# ============================================================
+# PodMonitor Example — Custom Application
+# ============================================================
+#
+# Use a PodMonitor instead of a ServiceMonitor when:
+#   - Your app has NO Kubernetes Service (e.g. batch Jobs, CronJobs)
+#   - You want to scrape EACH pod replica individually at their pod IP
+#     (ServiceMonitor goes through kube-proxy load balancing)
+#   - You want to scrape Istio sidecar (envoy) proxy metrics separately
+#   - You want to scrape multiple containers in a pod (e.g., sidecar + main)
+#   - Pod IPs change frequently and you want direct pod-level visibility
+#
+# Key difference: PodMonitor uses `podMetricsEndpoints` (targets pod ports
+# directly), while ServiceMonitor uses `endpoints` (targets Service ports).
+#
+# Prerequisites:
+#   - The pod must expose a named containerPort (e.g., "metrics")
+#   - The Prometheus CR must have podMonitorSelector: {} and
+#     podMonitorNamespaceSelector: {} to discover this monitor
+#
+# ============================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: my-batch-app
+  # PodMonitor can live in any namespace — our Prometheus CR watches all
+  namespace: my-app-ns
+  labels:
+    app.kubernetes.io/name: my-batch-app
+spec:
+  # Select pods by their labels — no Service required
+  selector:
+    matchLabels:
+      app: my-batch-app
+
+  # Which namespaces to look for matching pods
+  namespaceSelector:
+    matchNames:
+      - my-app-ns
+
+  # Use podMetricsEndpoints (NOT endpoints — that is for ServiceMonitor)
+  podMetricsEndpoints:
+    - # Must match a named containerPort on the pod spec
+      port: metrics
+
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+
+      # ---- Optional: scrape a specific container in the pod ----
+      # Useful when a pod has multiple containers (e.g., app + istio-proxy)
+      # container: my-batch-app
+
+      # Relabeling — add cluster label and use pod name as instance
+      relabelings:
+        - targetLabel: cluster
+          replacement: vks-cluster-1
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: instance
+        # Expose pod phase as a label for filtering in dashboards
+        - sourceLabels: [__meta_kubernetes_pod_phase]
+          targetLabel: pod_phase
+
+      # Metric relabeling — drop noisy metrics after scrape
+      metricRelabelings:
+        - action: drop
+          regex: go_(gc_duration_seconds.*|goroutines|memstats.*)
+          sourceLabels: [__name__]
+
+---
+# ============================================================
+# PodMonitor for Istio Envoy Sidecar Metrics
+# ============================================================
+#
+# Istio injects an envoy proxy sidecar into every pod in an
+# Istio-enabled namespace. The sidecar exposes Prometheus metrics
+# on port 15090 at /stats/prometheus. There is no Service for this
+# port — PodMonitor is the right tool.
+#
+# To use this, label the namespace with istio-injection=enabled
+# and apply this PodMonitor to scrape the envoy sidecars.
+#
+# ============================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: istio-envoy-sidecar
+  namespace: tanzu-system-monitoring
+  labels:
+    app.kubernetes.io/name: istio-envoy-sidecar
+spec:
+  # Select all pods that have an istio sidecar injected
+  selector:
+    matchLabels:
+      security.istio.io/tlsMode: istio
+
+  # Scrape from all namespaces (cluster-wide envoy telemetry)
+  namespaceSelector:
+    any: true
+
+  podMetricsEndpoints:
+    - port: http-envoy-prom
+      path: /stats/prometheus
+      interval: 30s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_label_app]
+          targetLabel: app
+      metricRelabelings:
+        # Keep only the most useful Istio metrics to control cardinality
+        - action: keep
+          regex: istio_requests_total|istio_request_duration_milliseconds.*|istio_request_bytes.*|istio_response_bytes.*|istio_tcp_.*|envoy_cluster_upstream_rq.*|envoy_server_.*
+          sourceLabels: [__name__]

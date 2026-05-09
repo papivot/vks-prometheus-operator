@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus
+  namespace: tanzu-system-monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: selfsigned
+    kubernetes.io/ingress.class: istio
+spec:
+  ingressClassName: istio
+  rules:
+    - host: prometheus.10.138.169.17.sslip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-auth-proxy
+                port:
+                  number: 4180
+  tls:
+    - hosts:
+        - prometheus.10.138.169.17.sslip.io
+      secretName: prometheus-tls

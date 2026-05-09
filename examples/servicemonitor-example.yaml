@@ -1,0 +1,105 @@
+# ============================================================
+# ServiceMonitor Example — Custom Application
+# ============================================================
+#
+# Use a ServiceMonitor when your application:
+#   - Has a stable Kubernetes Service
+#   - Exposes a Prometheus /metrics endpoint on a named port
+#   - Is a long-running service (Deployment, StatefulSet)
+#
+# Prerequisites for this to work:
+#   1. Your app's Service must have a named port (e.g., "metrics")
+#   2. The Prometheus CR watches all namespaces (serviceMonitorNamespaceSelector: {})
+#      so no special labels are required on the ServiceMonitor itself
+#
+# ============================================================
+#
+# Example Application Service (what your app should look like):
+#
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: my-app
+#   namespace: my-app-ns
+#   labels:
+#     app: my-app          # <-- must match ServiceMonitor selector below
+# spec:
+#   selector:
+#     app: my-app
+#   ports:
+#     - name: metrics      # <-- named port, referenced in ServiceMonitor
+#       port: 8080
+#       targetPort: 8080
+#
+# ============================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-app
+  # The ServiceMonitor can live in any namespace — our Prometheus CR
+  # watches all namespaces via serviceMonitorNamespaceSelector: {}
+  namespace: my-app-ns
+  labels:
+    app.kubernetes.io/name: my-app
+spec:
+  # Select the Service(s) to scrape by their labels
+  selector:
+    matchLabels:
+      app: my-app
+
+  # Which namespace(s) to look for the matching Services
+  # Use matchNames for specific namespaces, or omit for all namespaces
+  namespaceSelector:
+    matchNames:
+      - my-app-ns
+
+  endpoints:
+    - # Must match a named port on the Service
+      port: metrics
+
+      # Scrape path — default is /metrics
+      path: /metrics
+
+      # How often to scrape. Defaults to the Prometheus global scrapeInterval.
+      interval: 30s
+
+      # Scrape timeout (must be <= interval)
+      scrapeTimeout: 10s
+
+      # Use https if your app exposes TLS on the metrics endpoint
+      scheme: http
+
+      # ---- Optional: TLS config for HTTPS metrics endpoints ----
+      # tlsConfig:
+      #   caFile: /etc/prometheus/secrets/my-app-tls/ca.crt
+      #   certFile: /etc/prometheus/secrets/my-app-tls/tls.crt
+      #   keyFile: /etc/prometheus/secrets/my-app-tls/tls.key
+      #   insecureSkipVerify: false
+
+      # ---- Optional: Authorization header for protected /metrics ----
+      # authorization:
+      #   type: Bearer
+      #   credentials:
+      #     name: my-app-metrics-token
+      #     key: token
+
+      # Relabeling — runs BEFORE the scrape, reshapes target labels
+      relabelings:
+        # Add a 'cluster' label to every time series from this target
+        - targetLabel: cluster
+          replacement: vks-cluster-1
+        # Use the pod name as the instance label instead of the IP
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: instance
+
+      # Metric relabeling — runs AFTER the scrape, on individual metrics
+      metricRelabelings:
+        # Drop internal Go runtime metrics to reduce cardinality
+        - action: drop
+          regex: go_(gc_duration_seconds.*|goroutines|memstats.*)
+          sourceLabels: [__name__]
+        # Drop metrics with a specific label value you don't care about
+        # - action: drop
+        #   regex: (debug|test)
+        #   sourceLabels: [environment]
